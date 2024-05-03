@@ -32,10 +32,12 @@ internal class CacheItemEnvelope<T> where T: class
     // //     return item != null;
     // // }
 
-    public T GetOrCreate(Func<T> itemFactory, out bool newItemWasCreated)
+    public T GetOrCreate(Func<T> itemFactory, out bool newItemWasCreated, out bool retrievedFromWeakReference)
     {
         this.LastAccessed = DateTime.UtcNow;
         newItemWasCreated = false;
+        retrievedFromWeakReference = false;
+        bool strongReferenceIsNull = this.StrongReference is null; // Just used for statistics
         // https://learn.microsoft.com/en-us/dotnet/csharp/language-reference/operators/null-coalescing-operator
         // Too clever? It was the editors fault for suggesting it
         // If the strong reference is not null, return it. Otherwise assign the weak reference target to the strong reference and return it
@@ -43,6 +45,9 @@ internal class CacheItemEnvelope<T> where T: class
         var item = this.StrongReference ??= this.WeakReference?.Target as T;
         if (item != null)
         {
+            // If the strong reference was null but the item now exists, it was found from the weak reference.
+            // There are race conditions where this is not stricly true, but they are not overly important
+            retrievedFromWeakReference = strongReferenceIsNull;
             return item;
         }
 

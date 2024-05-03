@@ -1,9 +1,11 @@
+using System.IO.Compression;
+
 namespace WeakReferenceCache;
 
 public class WeakReferenceCache<T> where T : class
 {
     private readonly TimeSpan rollingLifeTime;
-    
+
     /// <summary>
     /// Only remove items from the dictionary if you can get a writer lock on this.
     /// </summary>
@@ -11,12 +13,18 @@ public class WeakReferenceCache<T> where T : class
 
     // TODO: Implement something to make strong references weak when they expire
     // TODO: Implement removal of no-longer-valid cache items (i.e. the weak reference is no longer valid)
-    // TODO: Add telemetry points for use of weak references
 
     private readonly Dictionary<string, CacheItemEnvelope<T>> items = new();
 
     public event Action? CacheHit;
     public event Action? CacheMiss;
+
+    /// <summary>
+    /// This may in some circumstances slightly overreport this number, specifically when two threads both retrieve the same object at
+    /// exactly the same time - both may be counted as having retrieved it from the weak reference even though, technically, this is only
+    /// true for one of them.
+    /// </summary>
+    public event Action? FoundFromWeakReference;
 
     /// <summary>
     /// Creates a new instance of the cache.
@@ -47,22 +55,30 @@ public class WeakReferenceCache<T> where T : class
                 cacheItem = this.items[key];
             }
 
-            var itemFromCache = cacheItem.GetOrCreate(factory, out bool newItemWasCreated);
-            if (newItemWasCreated)
-            {
-                this.NotifyCacheMiss();
-            } 
-            else 
-            {
-                this.NotifyCacheHit();
-            }
+            var itemFromCache = cacheItem.GetOrCreate(factory, out bool newItemWasCreated, out bool retrievedFromWeakReference);
+            this.NotifyStats(newItemWasCreated, retrievedFromWeakReference);
 
             return itemFromCache;
-            
         }
         finally
         {
             this.itemRemovalLock.ExitReadLock();
+        }
+    }
+
+    private void NotifyStats(bool newItemWasCreated, bool retrievedFromWeakReference)
+    {
+        if (newItemWasCreated)
+        {
+            this.CacheMiss?.Invoke();
+        }
+        else
+        {
+            this.CacheHit?.Invoke();
+        }
+        if (retrievedFromWeakReference)
+        {
+            this.FoundFromWeakReference?.Invoke();
         }
     }
 
@@ -81,15 +97,4 @@ public class WeakReferenceCache<T> where T : class
             }
         }
     }
-
-    private void NotifyCacheHit()
-    {
-        this.CacheHit?.Invoke();
-    }
-
-    private void NotifyCacheMiss()
-    {
-        this.CacheMiss?.Invoke();
-    }
-
 }
